@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSP: Map Coloring with MRV and Degree Heuristic</title>
+    <link rel="stylesheet" href="part1.css">
+</head>
+<body>
+    <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+    </div>
+
+    <div class="container">
+        <div class="section" id="introduction">
+            <h1>CSP: Map Coloring using MRV and Degree Heuristic</h1>
+            
+            <h2>Introduction to Map Coloring Problems</h2>
+            <p>Map coloring is a classic Constraint Satisfaction Problem (CSP) where we need to assign colors to regions of a map such that no two adjacent regions share the same color. This problem demonstrates fundamental concepts in AI search algorithms and constraint satisfaction techniques. The challenge lies in efficiently exploring the solution space while maintaining consistency constraints.</p>
+
+            <div class="info-box">
+                <strong>⚠️ Key Concepts:</strong><br>
+                • <strong>Minimum Remaining Values (MRV):</strong> Choose the variable with the fewest legal values (most constrained variable)<br>
+                • <strong>Degree Heuristic:</strong> Break ties by selecting the variable involved in the most constraints with unassigned variables<br>
+                • <strong>Time Complexity:</strong> O(d^n) worst case, but heuristics significantly reduce average case<br>
+                • <strong>Space Complexity:</strong> O(n) for the recursion stack, where n is the number of variables
+            </div>
+
+            <h3>Why Use Variable Selection Heuristics?</h3>
+            <p>The MRV heuristic helps us fail fast by immediately detecting dead ends when a variable has no legal values. The degree heuristic reduces future branching by selecting variables that constrain the most other variables. Together, they dramatically improve search efficiency by reducing the branching factor early in the search tree.</p>
+
+            <div class="heuristic-comparison">
+                <div class="heuristic-card">
+                    <h4>1️⃣ MRV (Most Constrained Variable)</h4>
+                    <p><strong>Idea:</strong> Choose the variable with the smallest domain size</p>
+                    <p><strong>Benefit:</strong> Reduces branching factor and detects failures early</p>
+                    <p><strong>When to use:</strong> Primary heuristic for variable selection</p>
+                </div>
+                <div class="heuristic-card">
+                    <h4>2️⃣ Degree Heuristic (Most Constraining)</h4>
+                    <p><strong>Idea:</strong> Choose the variable involved in most constraints with unassigned variables</p>
+                    <p><strong>Benefit:</strong> Reduces future domains of other variables</p>
+                    <p><strong>When to use:</strong> As a tie-breaker when MRV produces ties</p>
+                </div>
+            </div>
+ 
+            <div class="complexity-box">
+                <h4>📈 Performance Analysis</h4>
+                <p><strong>Without Heuristics:</strong> Random variable selection leads to high branching factors throughout the search tree.</p>
+                <p><strong>With MRV + Degree:</strong> Low branching factor early on, and forward checking further reduces domains as we progress.</p>
+                <p><strong>Key Insight:</strong> MRV is generally the stronger heuristic, so we prioritize it and use Degree for tie-breaking.</p>
+            </div>
+
+            <div class="algorithm-steps">
+                <h4>Algorithm Overview:</h4>
+                1. <strong>Variable Selection:</strong> Use MRV to select the variable with fewest legal values<br>
+                2. <strong>Tie Breaking:</strong> If multiple variables have the same MRV, use Degree heuristic<br>
+                3. <strong>Value Assignment:</strong> Try each value in the selected variable's domain<br>
+                4. <strong>Forward Checking:</strong> Update domains of neighboring variables to maintain arc consistency<br>
+                5. <strong>Recursion:</strong> Recursively solve remaining variables<br>
+                6. <strong>Backtracking:</strong> If no solution exists, backtrack and try next value
+            </div>
+        </div>
+
+        <div class="section" id="steps">
+            <h1>Step-by-Step Algorithm Execution</h1>
+            
+            <div class="step-counter" id="stepCounter">Step 1 of 10</div>
+            
+            <div class="step-container">
+                <h2 class="step-title" id="stepTitle">Step 1: Initial State</h2>
+                
+                <div style="text-align: center;">
+                    <img id="stepImage" src="step1.png" alt="Step 1 visualization" class="step-image" style="display: none;">
+                    <div id="imagePlaceholder" style="width: 600px; height: 400px; background: #f0f0f0; border: 2px dashed #ccc; display: inline-flex; align-items: center; justify-content: center; margin: 20px 0; border-radius: 10px;">
+                        <span style="color: #666; font-size: 1.2em;">Upload Step 1 image</span>
+                    </div>
+                </div>
+                
+                <div class="step-description" id="stepDescription">
+                    <strong>Step 1:</strong><br>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-secondary" id="prevBtn" onclick="previousStep()" disabled>Previous Step</button>
+                <button class="btn" id="nextBtn" onclick="nextStep()">Next Step</button>
+                <button class="btn btn-secondary" onclick="resetSteps()">Reset</button>
+            </div>
+        </div>
+
+        <!-- Code Display  -->
+        <div class="section" id="code-section">
+            <h1>Algorithm Implementation</h1>
+            <h2>Python Implementation / Pseudo Code</h2>
+            <p>Here's how we can implement the CSP map coloring algorithm with MRV and Degree heuristics:</p>
+
+            <div class="code-block">
+                Just drop some code here (Probably from book?)
+            </div>
+
+            <div class="info-box">
+                <strong>Key Implementation Points:</strong><br>
+                • <strong>MRV Implementation:</strong> Count remaining legal values in each variable's domain<br>
+                • <strong>Degree Heuristic:</strong> Count constraints with unassigned variables only<br>
+                • <strong>Forward Checking:</strong> Maintain arc consistency by removing conflicting values<br>
+                • <strong>Backtracking:</strong> Restore domain states when backtracking occurs<br>
+                • <strong>Early Failure Detection:</strong> Stop immediately if any domain becomes empty
+            </div>
+
+            <div class="highlight">
+                <strong>❗Performance Tip:</strong> The combination of MRV and Degree heuristics with forward checking typically reduces the search space by orders of magnitude compared to naive backtracking!
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentStep = 1;
+        const totalSteps = 10;
+        const stepDescriptions = [
+            `Step 1:`,
+
+            `Step 2:`,
+
+            `Step 3:`,
+
+            `Step 4:`,
+
+            `Step 5:`,
+
+            `Step 6:`,
+
+            `Step 7:`,
+
+            `Step 8:`,
+
+            `Step 9:`,
+
+            `<strong>Complete Solution Found:</strong><br>
+            <strong>Final Assignment:</strong><br>
+            • SA = <span style="color: red; font-weight: bold;">Red</span><br>
+            • NT = <span style="color: blue; font-weight: bold;">Blue</span><br>
+            • Q = <span style="color: green; font-weight: bold;">Green</span><br>
+            • NSW = <span style="color: blue; font-weight: bold;">Blue</span><br>
+            • V = <span style="color: green; font-weight: bold;">Green</span><br>
+            • T = <span style="color: red; font-weight: bold;">Red</span><br>
+            • WA = <span style="color: green; font-weight: bold;">Green</span><br><br>
+            <strong>Success!</strong> All adjacent regions have different colors.<br>
+            <strong>Efficiency:</strong> No backtracking required thanks to MRV + Degree heuristics!`
+        ];
+
+        const stepTitles = [
+            "Step 1: Initial State & Degree Heuristic",
+            "Step 2: Apply MRV After First Assignment", 
+            "Step 3: Degree Heuristic Tie-Breaking",
+            "Step 4: Variable Assignment & Forward Checking",
+            "Step 5: Domain Reduction Results",
+            "Step 6: Continued MRV Selection",
+            "Step 7: Chain Reaction of Assignments", 
+            "Step 8: Near Complete Solution",
+            "Step 9: Final Variable Assignment",
+            "Step 10: Complete Solution Verification"
+        ];
+
+        function updateStep() {
+            document.getElementById('stepCounter').textContent = `Step ${currentStep} of ${totalSteps}`;
+            
+            document.getElementById('stepTitle').textContent = stepTitles[currentStep - 1];
+            
+            document.getElementById('stepDescription').innerHTML = stepDescriptions[currentStep - 1];
+            
+            const stepImage = document.getElementById('stepImage');
+            const placeholder = document.getElementById('imagePlaceholder');
+            
+            stepImage.src = `step${currentStep}.png`;
+            placeholder.innerHTML = `<span style="color: #666; font-size: 1.2em;">Upload Step ${currentStep} image</span>`;
+            
+            const progressFill = document.getElementById('progressFill');
+            const progressPercent = (currentStep / totalSteps) * 100;
+            progressFill.style.width = progressPercent + '%';
+            
+            document.getElementById('prevBtn').disabled = currentStep === 1;
+            document.getElementById('nextBtn').disabled = currentStep === totalSteps;
+            
+            if (currentStep === totalSteps) {
+                document.getElementById('nextBtn').textContent = 'Complete!';
+            } else {
+                document.getElementById('nextBtn').textContent = 'Next Step';
+            }
+        }
+
+        function nextStep() {
+            if (currentStep < totalSteps) {
+                currentStep++;
+                updateStep();
+            }
+        }
+
+        function previousStep() {
+            if (currentStep > 1) {
+                currentStep--;
+                updateStep();
+            }
+        }
+
+        function resetSteps() {
+            currentStep = 1;
+            updateStep();
+        }
+
+        document.getElementById('stepImage').addEventListener('load', function() {
+            this.style.display = 'block';
+            document.getElementById('imagePlaceholder').style.display = 'none';
+        });
+
+        document.getElementById('stepImage').addEventListener('error', function() {
+            this.style.display = 'none';
+            document.getElementById('imagePlaceholder').style.display = 'inline-flex';
+        });
+
+        window.onload = function() {
+            updateStep();
+        };
+    </script>
+</body>
+</html>
