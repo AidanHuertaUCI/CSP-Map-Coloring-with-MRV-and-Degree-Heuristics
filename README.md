@@ -19,8 +19,5 @@ This project visualizes the **Map Coloring Problem** using both:
 
    ```powershell
    start mapcolor.html
-
-
-
 > ⚠️ **Notice**: If it’s your first time running the project, you may be prompted to select a default app to open the file.  
 > Select your **web browser of choice** and continue.
