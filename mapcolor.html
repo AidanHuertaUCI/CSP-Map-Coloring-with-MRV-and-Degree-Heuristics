@@ -118,45 +118,85 @@
         let currentStep = 1;
         const totalSteps = 10;
         const stepDescriptions = [
-            `Step 1:`,
 
-            `Step 2:`,
+            `Step 1:<br>All variables are unassigned. Every region (A–G) starts with the domain displayed on the map. The search will begin by applying MRV.`,
 
-            `Step 3:`,
+            `Step 2:<br>
+            <strong>Region B</strong> is selected using <strong>MRV</strong> (smallest domain) and is assigned <span style="color: blue; font-weight: bold;">Blue</span>.<br><br> 
+            
+            <strong>Forward checking prunes</strong> <span style="color: blue; font-weight: bold;">Blue</span> <strong>from all adjacent regions.</strong>`,
 
-            `Step 4:`,
+            `Step 3:<br>
+             Next, <strong>Region A</strong> is selected using the <strong>Degree Heuristic</strong> as a tie breaker.<br><br>
 
-            `Step 5:`,
+             <strong>Region A</strong> and <strong>Region E</strong> have the <strong>same number of remaining colors</strong> (2), so the <strong>Minimum Remaining Values (MRV)</strong> heuristic results in a tie.<br><br>
 
-            `Step 6:`,
+             To break the tie, we apply the <strong>Degree Heuristic</strong>, which looks at how many <strong>unassigned neighbors</strong> each region has:<br><br>
+             
+             • <strong>Region A</strong> has <strong>4 unassigned neighbors</strong><br><br>
 
-            `Step 7:`,
+             • <strong>Region E</strong> has <strong>2 unassigned neighbors</strong><br><br>
 
-            `Step 8:`,
+             Since Region A is connected to more unassigned regions, <strong>it is more constrained</strong>, so we choose <strong>Region A.</strong><br><br>
 
-            `Step 9:`,
+             We assign <span style="color: red; font-weight: bold;">Red</span> to Region A and then continue with <strong>forward checking</strong> to remove invalid color options from its neighboring regions.`,
+
+            `Step 4:<br>
+             <strong>Region C</strong> is selected using the <strong>Degree Heuristic</strong> as a tie breaker.<br><br>
+
+             <strong>Region C</strong> and <strong>Region E</strong> have the <strong>same number of remaining colors</strong> (2), so the <strong>Minimum Remaining Values (MRV)</strong> heuristic results in a tie.<br><br>
+
+             To break the tie, we apply the <strong>Degree Heuristic</strong>, which looks at how many <strong>unassigned neighbors</strong> each region has:<br><br>
+             
+             • <strong>Region C</strong> has <strong>3 unassigned neighbors</strong><br><br>
+
+             • <strong>Region E</strong> has <strong>2 unassigned neighbors</strong><br><br>
+
+             Since Region C is connected to more unassigned regions, <strong>it is more constrained</strong>, so we choose <strong>Region C.</strong><br><br>
+
+             We assign <span style="color: green; font-weight: bold;">Green</span> to Region C and then continue with <strong>forward checking</strong> to remove invalid color options from its neighboring regions.`,
+
+            `Step 5:<br>
+
+            <strong>Region E</strong> has the fewest values left (1) and is assigned <span style="color: red; font-weight: bold;">Red</span>. All adjacent regions are updated via <strong>forward checking.</strong>`,
+
+            `Step 6:<br>
+            <strong>Region F</strong> is selected next. It avoids <span style="color: red; font-weight: bold;">Red</span> and <span style="color: green; font-weight: bold;">Green</span> due to neighbors, so it is assigned <span style="color: blue; font-weight: bold;">Blue</span>.<br><br>
+            
+            <strong>Forward checking prunes</strong> <span style="color: blue; font-weight: bold;">Blue</span> <strong>from all adjacent regions.</strong>`,
+
+            `Step 7:<br>
+            <strong>Region D</strong> is selected using <strong>MRV</strong>. Only <span style="color: #FFD700; font-weight: bold;">Yellow</span> remains valid. <strong>Region D</strong> is assigned accordingly.<br><br>
+            
+            <strong>Forward checking prunes</strong> <span style="color: #FFD700; font-weight: bold;">Yellow</span> <strong>from all adjacent regions.</strong>`,
+
+            `Step 8:<br>
+            <strong>Region G</strong> is selected next. Only <span style="color: green; font-weight: bold;">Green</span> remains valid after all constraints. Assigned without conflict.`,
+
+            `Step 9:<br>
+            All variables have assignments. No domain conflicts detected. The solution is consistent with all constraints.`,
 
             `<strong>Complete Solution Found:</strong><br>
             <strong>Final Assignment:</strong><br>
-            • SA = <span style="color: red; font-weight: bold;">Red</span><br>
-            • NT = <span style="color: blue; font-weight: bold;">Blue</span><br>
-            • Q = <span style="color: green; font-weight: bold;">Green</span><br>
-            • NSW = <span style="color: blue; font-weight: bold;">Blue</span><br>
-            • V = <span style="color: green; font-weight: bold;">Green</span><br>
-            • T = <span style="color: red; font-weight: bold;">Red</span><br>
-            • WA = <span style="color: green; font-weight: bold;">Green</span><br><br>
+            • A = <span style="color: red; font-weight: bold;">Red</span><br>
+            • B = <span style="color: blue; font-weight: bold;">Blue</span><br>
+            • C = <span style="color: green; font-weight: bold;">Green</span><br>
+            • D = <span style="color: #FFD700; font-weight: bold;">Yellow</span><br>
+            • E = <span style="color: red; font-weight: bold;">Red</span><br>
+            • F = <span style="color: blue; font-weight: bold;">Blue</span><br>
+            • G = <span style="color: green; font-weight: bold;">Green</span><br><br>
             <strong>Success!</strong> All adjacent regions have different colors.<br>
             <strong>Efficiency:</strong> No backtracking required thanks to MRV + Degree heuristics!`
         ];
 
         const stepTitles = [
-            "Step 1: Initial State & Degree Heuristic",
-            "Step 2: Apply MRV After First Assignment", 
+            "Step 1: Initial State",
+            "Step 2: Applying MRV after the initial state", 
             "Step 3: Degree Heuristic Tie-Breaking",
-            "Step 4: Variable Assignment & Forward Checking",
-            "Step 5: Domain Reduction Results",
+            "Step 4: Degree Heuristic Tie-Breaking Again",
+            "Step 5: Applying MRV to the previous map",
             "Step 6: Continued MRV Selection",
-            "Step 7: Chain Reaction of Assignments", 
+            "Step 7: MRV Selection Continued", 
             "Step 8: Near Complete Solution",
             "Step 9: Final Variable Assignment",
             "Step 10: Complete Solution Verification"
