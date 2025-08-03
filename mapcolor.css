@@ -69,8 +69,9 @@
             height: auto;
             border: 2px solid #e2e8f0;
             border-radius: 10px;
-            margin: 20px 0;
+            margin: 20px auto;
             box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            display: block;
         }
 
         .step-description {
@@ -220,4 +221,5 @@
             border-left: 4px solid #ed8936;
             padding: 15px;
             margin: 15px 0;
+
         }
