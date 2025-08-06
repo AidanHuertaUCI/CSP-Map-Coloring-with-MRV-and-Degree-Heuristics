@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CSP: Map Coloring with MRV and Degree Heuristic</title>
     <link rel="stylesheet" href="mapcolor.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
 </head>
 <body>
     <div class="progress-bar">
@@ -64,7 +67,7 @@
 
         <div class="section" id="steps">
             <h1>Step-by-Step Algorithm Execution</h1>
-            
+            <h4>❗Tip: Try each step on your own. Click next to confirm your answer and see why the choice is the correct one.</h4>
             <div class="step-counter" id="stepCounter">Step 1 of 10</div>
             
             <div class="step-container">
@@ -92,12 +95,72 @@
         <!-- Code Display  -->
         <div class="section" id="code-section">
             <h1>Algorithm Implementation</h1>
-            <h2>Python Implementation / Pseudo Code</h2>
+            <h2>Python Implementation</h2>
             <p>Here's how we can implement the CSP map coloring algorithm with MRV and Degree heuristics:</p>
 
             <div class="code-block">
-                Just drop some code here (Probably from book?)
+            <pre><code class="language-python">def mrv_degree_csp_solver(regions, colors, neighbors):
+                # Initialize domains (each region can use any color initially)
+                domains = {region: colors.copy() for region in regions}
+                assignment = {}
+                
+                def is_consistent(region, color):
+                    return all(assignment.get(n) != color for n in neighbors[region])
+                
+                def forward_check(region, color):
+                    removed = {}
+                    for n in neighbors[region]:
+                        if n not in assignment and color in domains[n]:
+                            domains[n].remove(color)
+                            removed.setdefault(n, []).append(color)
+                    return removed
+                
+                def restore(removed):
+                    for r, colors in removed.items():
+                        domains[r].extend(colors)
+                
+                def select_variable(regions, domains, neighbors):
+                    unassigned = [r for r in regions if r not in assignment]
+                    if not unassigned:
+                        return None
+                    
+                    # MRV: Find minimum remaining values
+                    min_values = min(len(domains[r]) for r in unassigned)
+                    mrv_vars = [r for r in unassigned if len(domains[r]) == min_values]
+                    
+                    # Degree heuristic: Break ties by most constraining variable
+                    if len(mrv_vars) > 1:
+                        max_degree = max(sum(1 for n in neighbors[r] if n not in assignment) 
+                                    for r in mrv_vars)
+                        return next(r for r in mrv_vars 
+                                if sum(1 for n in neighbors[r] if n not in assignment) == max_degree)
+                    
+                    return mrv_vars[0]
+                
+                def backtrack():
+                    if len(assignment) == len(regions):
+                        return assignment
+                    
+                    var = select_variable(regions, domains, neighbors)
+                    for color in domains[var][:]:
+                        if is_consistent(var, color):
+                            assignment[var] = color
+                            removed = forward_check(var, color)
+                            
+                            result = backtrack()
+                            if result:
+                                return result
+                            
+                            del assignment[var]
+                            restore(removed)
+                    
+                    return None
+                
+                return backtrack()
+
+            </code></pre>
             </div>
+
 
             <div class="info-box">
                 <strong>Key Implementation Points:</strong><br>
