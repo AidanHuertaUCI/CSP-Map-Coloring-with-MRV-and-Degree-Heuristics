@@ -1,9 +1,14 @@
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from matplotlib.widgets import Button, TextBox
+from matplotlib.widgets import Button, CheckButtons, Slider, TextBox
+from matplotlib.lines import Line2D
+
 import numpy as np
-import random
 import re
+import json
+import math
+import time as _time
+
 
 class MapColoringVisualizer:
     def __init__(self):
@@ -12,512 +17,779 @@ class MapColoringVisualizer:
         self.fig.patch.set_facecolor('#1a1a1a')
         self.ax.set_facecolor('#2d2d2d')
 
-        # {node_id: {'pos': (x, y), 'connections': set(), 'color': color}}
+        # ---- Graph ----
+        # nid -> {'pos':(x,y), 'connections':set(), 'color':str, 'domain':[str]}
         self.nodes = {}
         self.node_counter = 0
-
         self.node_radius = 0.8
+
+        # ---- Global palette: RESTRICTED TO 10 COLORS ----
         self.map_colors = [
             '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57',
-            '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3', '#FF9F43',
-            '#FD79A8', '#A29BFE', '#6C5CE7', '#74B9FF', '#00B894'
-        ]
+            '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3', '#FF9F43'
+        ]  # exactly 10
 
-        # drag state
-        self.dragging_id = None
-        self.drag_offset = (0.0, 0.0)
-
-        # edge-edit state
-        self.edit_edges_mode = False
-        self.edge_select_first = None  # first node clicked in edge edit mode
-
-        # heuristic toggles
+        # ---- Heuristics ----
         self.use_mrv = True
         self.use_degree = True
 
-        self.setup_plot()
-        self.setup_widgets()
-        self._connect_events()  # drag + click handling
+        # ---- Animation ----
+        self.animation_delay = 0.25  # seconds
 
-        plt.tight_layout()
+        # ---- Drag / edge edit ----
+        self.dragging_id = None
+        self.drag_offset = (0.0, 0.0)
+        self.edit_edges_mode = False
+        self.edge_first = None
+
+        # ---- Domain panel / selection ----
+        self.selected_for_domain = None
+        self.show_domain_panel = True  # logical toggle
+        self.ax_domain = None          # created lazily
+
+        # positions for graph when panel on/off (figure coords)
+        self.ax_pos_on = None
+        self.ax_pos_off = [0.06, 0.36, 0.90, 0.52]  # wider/centered when panel is hidden
+
+        # ---- Performance caches ----
+        self.node_patches = {}   # nid -> Circle patch
+        self.node_labels = {}    # nid -> Text artist
+        self.edge_lines = {}     # (a,b) sorted tuple -> Line2D
+        self.status_text = None
+        self.edit_ring = None    # selection ring patch during edge-edit mode
+
+        self._last_motion_ts = 0.0   # throttle mouse move
+        self._motion_hz = 120.0      # cap to ~120 FPS
+
+        # Blitting support
+        self._bg = None
+        self._blit_enabled = True
+
+        self._build_ui()
         plt.show()
 
-    # ---------------- UI / Plot ----------------
+    # ---------- UI ----------
+    def _build_ui(self):
+        # leave room for bottom controls and top-left heuristics
+        plt.subplots_adjust(bottom=0.36, top=0.88, right=0.96, left=0.06)
 
-    def setup_plot(self):
+        # Static plot styling (axes only; no heavy text each frame)
+        self._style_axes_once()
+
+        # Title and instructions created once
+        self.fig.suptitle("Map Coloring Problem Visualizer",
+                          fontsize=22, color='white', fontweight='bold', y=0.94)
+
+        instructions = (
+            "How to use:\n"
+            "• Add Region; drag nodes to arrange.\n"
+            "• Edit Borders: click two nodes to toggle an edge.\n"
+            "• MRV / Degree toggles (top-left).\n"
+            "• Delay slider (below toggles).\n"
+            "• Click any node to view its domain (right panel).\n"
+            "• Modify Domain below, then Apply.\n"
+            "• Auto Color runs backtracking + forward checking."
+        )
+        self.instructions_artist = self.fig.text(
+            0.98, 0.98, instructions, fontsize=10, color='#cccccc',
+            va='top', ha='right',
+            bbox=dict(boxstyle="round,pad=0.4", facecolor='#3a3a3a',
+                      alpha=0.9, edgecolor='#5a5a5a', linewidth=1)
+        )
+
+        self._setup_topleft_controls()   # MRV/Degree + Delay
+        self._setup_bottom_controls()    # buttons + domain editor
+        self._setup_domain_panel()       # creates ax_domain if shown
+        self._connect_events()
+
+        # remember the "panel on" position of the main axes so we can restore later
+        self.ax_pos_on = list(self.ax.get_position().bounds)
+        self._apply_ax_position()
+
+        # Build scene once (empty initially) and capture background for blitting
+        self._build_scene()
+        self._capture_bg()
+        self._update_status()
+
+    def _style_axes_once(self):
         self.ax.set_xlim(-1, 11)
         self.ax.set_ylim(-1, 9)
         self.ax.set_aspect('equal')
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
+        self.ax.set_xticks([]); self.ax.set_yticks([])
         self.ax.grid(True, alpha=0.1, color='white')
-        subtitle = 'Map Coloring Problem Visualizer'
-        if self.edit_edges_mode:
-            subtitle += '  —  EDIT BORDERS: click two nodes to toggle'
-        self.fig.suptitle(subtitle,
-                          fontsize=22, color='white', fontweight='bold', y=0.94)
 
-    def setup_widgets(self):
-        # extra space for a third row of buttons (toggles)
-        plt.subplots_adjust(bottom=0.34, top=0.88)
+    # ---- TOP-LEFT: MRV/Degree + Delay slider ----
+    def _setup_topleft_controls(self):
+        self.ax_checks = plt.axes([0.06, 0.80, 0.22, 0.10], facecolor='#2b2b2b')
+        self.checks = CheckButtons(self.ax_checks, ['MRV', 'Degree'], [self.use_mrv, self.use_degree])
+        self.checks.on_clicked(self._toggle_checks)
 
+        for lab in self.checks.labels:
+            lab.set_color('white')
+            lab.set_fontweight('bold')
+            lab.set_fontsize(12)
+
+        for s in self.ax_checks.spines.values():
+            s.set_color('#444444')
+            s.set_linewidth(1)
+
+        for rect in self._get_check_rects():
+            rect.set_edgecolor('white')
+            rect.set_linewidth(1.5)
+        for ln in self._get_check_lines():
+            ln.set_color('white')
+            ln.set_linewidth(1.5)
+
+        self._refresh_toggle_styles()
+
+        ax_slider = plt.axes([0.06, 0.74, 0.20, 0.035], facecolor='#2b2b2b')
+        self.delay_slider = Slider(ax_slider, 'Delay (s)', 0.0, 1.0, valinit=self.animation_delay)
+        self.delay_slider.label.set_color('white')
+        self.delay_slider.valtext.set_color('white')
+        self.delay_slider.on_changed(lambda v: setattr(self, 'animation_delay', float(v)))
+        for s in ax_slider.spines.values():
+            s.set_color('#444444'); s.set_linewidth(1)
+
+    def _setup_bottom_controls(self):
         button_color = '#4a4a4a'
-        text_color = 'white'
         hover_color = '#6a6a6a'
 
-        bh = 0.05
-        bw = 0.13
-        y0 = 0.22  # toggles row
-        y1 = 0.16  # first row of buttons
-        y2 = 0.10  # second row of buttons
-        y3 = 0.04  # text inputs
+        # Row B: Graph actions (bottom control area)
+        ax_add = plt.axes([0.07, 0.24, 0.14, 0.06])
+        self.btn_add = Button(ax_add, 'Add Region', color=button_color, hovercolor=hover_color)
+        self.btn_add.on_clicked(self._add_node)
 
-        # Row 0: Heuristic Toggles
-        ax_mrv = plt.axes([0.08, y0, bw, bh])
-        ax_mrv.set_facecolor(button_color)
-        self.mrv_btn = Button(ax_mrv, '', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.mrv_btn, text_color)
-        self.mrv_btn.on_clicked(self.toggle_mrv)
+        ax_auto = plt.axes([0.25, 0.24, 0.14, 0.06])
+        self.btn_auto = Button(ax_auto, 'Auto Color', color=button_color, hovercolor=hover_color)
+        self.btn_auto.on_clicked(self._auto_color)
 
-        ax_degree = plt.axes([0.25, y0, bw, bh])
-        ax_degree.set_facecolor(button_color)
-        self.degree_btn = Button(ax_degree, '', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.degree_btn, text_color)
-        self.degree_btn.on_clicked(self.toggle_degree)
+        ax_clear_colors = plt.axes([0.43, 0.24, 0.14, 0.06])
+        self.btn_clear_colors = Button(ax_clear_colors, 'Clear Colors', color=button_color, hovercolor=hover_color)
+        self.btn_clear_colors.on_clicked(self._clear_colors_only)
 
-        ax_both = plt.axes([0.42, y0, bw, bh])
-        ax_both.set_facecolor(button_color)
-        self.both_btn = Button(ax_both, '', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.both_btn, text_color)
-        self.both_btn.on_clicked(self.toggle_both)
+        ax_clear = plt.axes([0.61, 0.24, 0.14, 0.06])
+        self.btn_clear = Button(ax_clear, 'Clear All', color=button_color, hovercolor=hover_color)
+        self.btn_clear.on_clicked(self._clear_all)
 
-        # Row 1: Add, Auto Color, Clear All
-        ax_add_btn = plt.axes([0.08, y1, bw, bh])
-        ax_add_btn.set_facecolor(button_color)
-        self.add_btn = Button(ax_add_btn, 'Add Region', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.add_btn, text_color)
-        self.add_btn.on_clicked(self.add_node)
+        ax_edit = plt.axes([0.79, 0.24, 0.14, 0.06])
+        self.btn_edit = Button(ax_edit, 'Edit Borders: OFF', color=button_color, hovercolor=hover_color)
+        self.btn_edit.on_clicked(self._toggle_edit_edges)
 
-        ax_color_btn = plt.axes([0.25, y1, bw, bh])
-        ax_color_btn.set_facecolor(button_color)
-        self.color_btn = Button(ax_color_btn, 'Auto Color', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.color_btn, text_color)
-        self.color_btn.on_clicked(self.auto_color)
+        # Domain panel toggle (show/hide)
+        ax_dom_toggle = plt.axes([0.79, 0.30, 0.14, 0.05])
+        self.btn_dom_toggle = Button(ax_dom_toggle, 'Domain Panel: ON', color='#3d6d3d', hovercolor='#4c8c4c')
+        self.btn_dom_toggle.on_clicked(self._toggle_domain_panel)
 
-        ax_clear_btn = plt.axes([0.42, y1, bw, bh])
-        ax_clear_btn.set_facecolor(button_color)
-        self.clear_btn = Button(ax_clear_btn, 'Clear All', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.clear_btn, text_color)
-        self.clear_btn.on_clicked(self.clear_all)
+        # Row C: Domain editor (labels + inputs)
+        self.fig.text(0.0675, 0.10, 'Domain Node ID', fontsize=10, color='white', fontweight='bold')
+        ax_dom_id = plt.axes([0.07, 0.135, 0.09, 0.05], facecolor='#f0f0f0')
+        self.box_dom_id = TextBox(ax_dom_id, '', initial='', color='#f0f0f0', hovercolor='#ffffff')
 
-        # Row 2: Edit Borders, Connect All, Clear Borders
-        ax_edit_btn = plt.axes([0.08, y2, bw, bh])
-        ax_edit_btn.set_facecolor(button_color)
-        self.edit_btn = Button(ax_edit_btn, 'Edit Borders: OFF', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.edit_btn, text_color)
-        self.edit_btn.on_clicked(self.toggle_edit_borders)
+        self.fig.text(0.18, 0.10, 'Colors (idx or hex, comma-separated)', fontsize=10, color='white', fontweight='bold')
+        ax_dom_colors = plt.axes([0.18, 0.135, 0.35, 0.05], facecolor='#f0f0f0')
+        self.box_dom_colors = TextBox(ax_dom_colors, '', initial='1,2,3', color='#f0f0f0', hovercolor='#ffffff')
 
-        ax_connect_all = plt.axes([0.25, y2, bw, bh])
-        ax_connect_all.set_facecolor(button_color)
-        self.connect_all_btn = Button(ax_connect_all, 'Connect All', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.connect_all_btn, text_color)
-        self.connect_all_btn.on_clicked(self.connect_all)
+        ax_apply = plt.axes([0.55, 0.135, 0.12, 0.05])
+        self.btn_apply = Button(ax_apply, 'Apply Domain', color=button_color, hovercolor=hover_color)
+        self.btn_apply.on_clicked(self._apply_domain)
 
-        ax_clear_edges = plt.axes([0.42, y2, bw, bh])
-        ax_clear_edges.set_facecolor(button_color)
-        self.clear_edges_btn = Button(ax_clear_edges, 'Clear Borders', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.clear_edges_btn, text_color)
-        self.clear_edges_btn.on_clicked(self.clear_borders)
+        ax_reset = plt.axes([0.69, 0.135, 0.12, 0.05])
+        self.btn_reset = Button(ax_reset, 'Reset Domain', color=button_color, hovercolor=hover_color)
+        self.btn_reset.on_clicked(self._reset_domain)
 
-        # Row 3: Inputs
-        self.fig.text(0.08, y3 + 0.025, 'Enter borders for NEW region:', fontsize=11,
-                      color=text_color, fontweight='bold')
-        ax_connections = plt.axes([0.33, y3, 0.14, 0.04])
-        ax_connections.set_facecolor(button_color)
-        self.connections_box = TextBox(ax_connections, '', initial='1,2,3',
-                                       color=button_color, hovercolor=hover_color)
+        ax_reset_all = plt.axes([0.83, 0.135, 0.12, 0.05])
+        self.btn_reset_all = Button(ax_reset_all, 'Reset All Domains', color=button_color, hovercolor=hover_color)
+        self.btn_reset_all.on_clicked(self._reset_all_domains)
 
-        self.fig.text(0.50, y3 + 0.025, 'Set borders (pairs like 1-2,2-3):', fontsize=11,
-                      color=text_color, fontweight='bold')
-        ax_pairs = plt.axes([0.72, y3, 0.17, 0.04])
-        ax_pairs.set_facecolor(button_color)
-        self.pairs_box = TextBox(ax_pairs, '', initial='',
-                                 color=button_color, hovercolor=hover_color)
+        # Make TextBoxes' text visible (black on light bg)
+        for tb in [self.box_dom_id, self.box_dom_colors]:
+            try:
+                tb.text_disp.set_color('black')
+            except Exception:
+                pass
 
-        ax_set_pairs = plt.axes([0.90, y3, 0.08, 0.04])
-        ax_set_pairs.set_facecolor(button_color)
-        self.set_pairs_btn = Button(ax_set_pairs, 'Set Borders', color=button_color, hovercolor=hover_color)
-        self._style_btn(self.set_pairs_btn, text_color, small=True)
-        self.set_pairs_btn.on_clicked(self.set_borders_from_pairs)
+    # ---------- Domain panel sizing helpers (responsive) ----------
+    def _domain_cols_for(self, n):
+        # 1 col for <=3, 2 cols for 4–6, 3 cols for 7–10
+        return 1 if n <= 3 else (2 if n <= 6 else 3)
 
-        # Instruction box
-        instruction_text = (
-            'Build your map by adding regions and their borders.\n'
-            '• Drag nodes to rearrange.\n'
-            '• Toggle MRV / Degree heuristics above. "Both" toggles them together.\n'
-            '• Click "Edit Borders" then click two nodes to toggle a border.\n'
-            '• Use "Set Borders" with pairs like 1-2,2-3 to replace all borders.\n'
-            '• "Connect All" builds a complete graph; "Clear Borders" removes all edges.\n'
-            '• Auto Color runs backtracking with your selected heuristics + Forward Checking.'
-        )
-        self.fig.text(0.02, 0.92, instruction_text, fontsize=10, color='#cccccc', va='top',
-            bbox=dict(boxstyle="round,pad=0.4", facecolor='#3a3a3a',
-                      alpha=0.9, edgecolor='#5a5a5a', linewidth=1))
+    def _compute_domain_panel_rect(self, domain_size):
+        cols = self._domain_cols_for(domain_size)
+        base_width = 0.16
+        extra_per_col = 0.06
+        width = base_width + (cols - 1) * extra_per_col
+        right_margin = 0.02
+        left = max(0.06, 1.0 - width - right_margin)
+        bottom = 0.44
+        height = 0.30
+        return [left, bottom, width, height]
 
-        self._refresh_toggle_labels()
-
-    def _style_btn(self, btn, text_color, small=False):
-        btn.label.set_color(text_color)
-        btn.label.set_fontweight('bold')
-        btn.label.set_fontsize(9 if small else 10)
-
-    def _refresh_toggle_labels(self):
-        self.mrv_btn.label.set_text(f"MRV: {'ON' if self.use_mrv else 'OFF'}")
-        self.degree_btn.label.set_text(f"Degree: {'ON' if self.use_degree else 'OFF'}")
-        both_state = 'ON' if (self.use_mrv and self.use_degree) else 'OFF'
-        self.both_btn.label.set_text(f"Both: {both_state}")
-
-    def draw_graph(self):
-        """Draw the graph nodes/edges and overlay stats."""
-        self.ax.clear()
-        self.setup_plot()
-
-        if not self.nodes:
-            self.fig.canvas.draw_idle()
+    def _reposition_domain_panel(self):
+        if not self.ax_domain:
             return
+        if self.show_domain_panel and self.selected_for_domain in self.nodes:
+            ds = len(self.nodes[self.selected_for_domain]['domain'])
+        else:
+            ds = 6
+        self.ax_domain.set_position(self._compute_domain_panel_rect(ds))
 
-        # Draw edges (once per pair)
-        drawn_edges = set()
-        for node_id, node_data in self.nodes.items():
-            x1, y1 = node_data['pos']
-            for connected_id in node_data['connections']:
-                if connected_id in self.nodes:
-                    edge = tuple(sorted([node_id, connected_id]))
-                    if edge not in drawn_edges:
-                        x2, y2 = self.nodes[connected_id]['pos']
-                        self.ax.plot([x1, x2], [y1, y2], color='white',
-                                     linewidth=4, alpha=0.8, solid_capstyle='round')
-                        self.ax.plot([x1, x2], [y1, y2], color='#333333',
-                                     linewidth=2, alpha=0.6, solid_capstyle='round')
-                        drawn_edges.add(edge)
+    def _apply_ax_position(self):
+        if self.show_domain_panel:
+            if self.ax_pos_on:
+                self.ax.set_position(self.ax_pos_on)
+        else:
+            self.ax.set_position(self.ax_pos_off)
 
-        # Draw nodes
-        for node_id, node_data in self.nodes.items():
-            x, y = node_data['pos']
-            color = node_data['color']
+    def _get_check_rects(self):
+        cb = self.checks
+        for name in ("rectangles", "boxes", "_rectangles", "_boxes"):
+            rects = getattr(cb, name, None)
+            if rects:
+                return list(rects)
+        rects = [p for p in self.ax_checks.patches if isinstance(p, patches.Rectangle)]
+        return rects[:len(self.checks.labels)]
 
-            # selection highlight in edit mode
-            if self.edit_edges_mode and self.edge_select_first == node_id:
-                sel = patches.Circle((x, y), self.node_radius*1.15,
-                                     facecolor='none', edgecolor='#FFD166',
-                                     linewidth=3, zorder=2.5, linestyle='--')
-                self.ax.add_patch(sel)
+    def _get_check_lines(self):
+        lines = getattr(self.checks, "lines", None)
+        if lines:
+            flat = []
+            for item in lines:
+                if isinstance(item, (tuple, list)):
+                    flat.extend(item)
+                else:
+                    flat.append(item)
+            return flat
+        return [ln for ln in self.ax_checks.lines if isinstance(ln, Line2D)]
 
-            # shadow
-            shadow = patches.Circle((x + 0.1, y - 0.1), self.node_radius,
-                                    facecolor='black', alpha=0.3, zorder=1)
-            self.ax.add_patch(shadow)
+    def _create_domain_axes_if_needed(self):
+        if self.ax_domain or not self.show_domain_panel:
+            return
+        self.ax_domain = plt.axes([0.75, 0.44, 0.30, 0.30], facecolor='#202020')
+        self.ax_domain.set_xticks([]); self.ax_domain.set_yticks([])
+        for spine in self.ax_domain.spines.values():
+            spine.set_color('#666666')
+        self._reposition_domain_panel()
 
-            # outer + inner circle
-            circle = patches.Circle((x, y), self.node_radius,
-                                    facecolor=color, edgecolor='white',
-                                    linewidth=3, zorder=2)
-            self.ax.add_patch(circle)
+    def _setup_domain_panel(self):
+        if self.show_domain_panel:
+            self._create_domain_axes_if_needed()
+            self._render_domain_panel(None)
 
-            inner_circle = patches.Circle((x, y), self.node_radius * 0.7,
-                                          facecolor=color, alpha=0.6, zorder=3)
-            self.ax.add_patch(inner_circle)
+    # ---------- Events ----------
+    def _connect_events(self):
+        self.fig.canvas.mpl_connect('button_press_event', self._on_press)
+        self.fig.canvas.mpl_connect('motion_notify_event', self._on_motion)
+        self.fig.canvas.mpl_connect('button_release_event', self._on_release)
+        self.fig.canvas.mpl_connect('resize_event', lambda evt: (self._reposition_domain_panel(), self.fig.canvas.draw_idle()))
 
-            self.ax.text(x, y, str(node_id), ha='center', va='center',
-                         fontsize=16, fontweight='bold', color='white',
-                         zorder=4,
-                         bbox=dict(boxstyle="circle,pad=0.1", facecolor='black', alpha=0.7))
+    # ---------- Scene build & fast updates ----------
+    def _build_scene(self):
+        """Build (or rebuild) the whole scene once. Use when topology changes."""
+        self.ax.cla()
+        self._style_axes_once()
 
-        # Stats
-        if len(self.nodes) > 1:
-            used = len(set(nd['color'] for nd in self.nodes.values() if nd['color'] != '#888888'))
-            stats_text = f"Regions: {len(self.nodes)}"
-            if used > 0:
-                stats_text += f" | Colors: {used}"
-            if self.edit_edges_mode:
-                stats_text += " | EDIT BORDERS ON"
-            stats_text += f" | MRV={'ON' if self.use_mrv else 'OFF'}"
-            stats_text += f" | Degree={'ON' if self.use_degree else 'OFF'}"
-            self.ax.text(0.02, 0.98, stats_text,
-                transform=self.ax.transAxes, fontsize=12, color='white',
-                fontweight='bold',
-                bbox=dict(boxstyle="round,pad=0.4", facecolor='#4a4a4a',
-                          alpha=0.9, edgecolor='#6a6a6a', linewidth=1))
+        self.node_patches.clear()
+        self.node_labels.clear()
+        self.edge_lines.clear()
+
+        # edges
+        drawn = set()
+        for a, data in self.nodes.items():
+            x1, y1 = data['pos']
+            for b in data['connections']:
+                if b not in self.nodes: continue
+                e = tuple(sorted((a, b)))
+                if e in drawn: continue
+                x2, y2 = self.nodes[b]['pos']
+                ln = self.ax.plot([x1, x2], [y1, y2], color='white', linewidth=2, alpha=0.85)[0]
+                self.edge_lines[e] = ln
+                drawn.add(e)
+
+        # nodes + labels
+        for nid, data in self.nodes.items():
+            x, y = data['pos']
+            color = data['color']
+            c = patches.Circle((x, y), self.node_radius, facecolor=color, edgecolor='white', linewidth=3, zorder=2)
+            self.ax.add_patch(c)
+            self.node_patches[nid] = c
+
+            label = str(nid)
+            if 'domain' in data and len(data['domain']) != len(self.map_colors):
+                label += f" ({len(data['domain'])})"
+            t = self.ax.text(x, y, label, ha='center', va='center',
+                             fontsize=14, fontweight='bold', color='white', zorder=4)
+            self.node_labels[nid] = t
+
+        # ---- recreate persistent artists every rebuild (fixes disappearing status) ----
+        self.status_text = self.ax.text(
+            0.02, 0.98, "", transform=self.ax.transAxes,
+            fontsize=12, color='white', fontweight='bold',
+            bbox=dict(boxstyle="round,pad=0.4", facecolor='#4a4a4a',
+                      alpha=0.9, edgecolor='#6a6a6a', linewidth=1),
+            va='top'
+        )
+
+        self.edit_ring = patches.Circle(
+            (0, 0), self.node_radius*1.15, fill=False,
+            edgecolor='#FFD166', linewidth=3, linestyle='--',
+            zorder=3, visible=False
+        )
+        self.ax.add_patch(self.edit_ring)
 
         self.fig.canvas.draw_idle()
 
-    # --------------- Graph editing ---------------
+    def _update_status(self):
+        used = len({d['color'] for d in self.nodes.values() if d['color'] != '#888888'})
+        status = f"Regions: {len(self.nodes)}"
+        if used: status += f" | Colors: {used}"
+        status += f" | MRV={'ON' if self.use_mrv else 'OFF'}"
+        status += f" | Degree={'ON' if self.use_degree else 'OFF'}"
+        status += f" | Delay={self.animation_delay:.2f}s"
+        if self.edit_edges_mode: status += " | EDIT BORDERS ON"
+        if self.status_text:
+            self.status_text.set_text(status)
+            self.fig.canvas.draw_idle()
 
-    def get_smart_position(self):
-        """Sunflower (Vogel) layout centered on canvas."""
-        n = self.node_counter  # 0-based for math
-        if n == 0:
-            return 5, 4
+    def _capture_bg(self):
+        """Grab a clean background for blitting."""
+        if not self._blit_enabled:
+            return
+        self.fig.canvas.draw()
+        self._bg = self.fig.canvas.copy_from_bbox(self.ax.bbox)
+
+    def _blit_artists(self, artists):
+        """Efficiently redraw just these artists."""
+        if not (self._blit_enabled and self._bg is not None):
+            self.fig.canvas.draw_idle()
+            return
+        canvas = self.fig.canvas
+        canvas.restore_region(self._bg)
+        for a in artists:
+            try:
+                self.ax.draw_artist(a)
+            except Exception:
+                pass
+        canvas.blit(self.ax.bbox)
+        canvas.flush_events()
+
+    def _update_node_position(self, nid):
+        """Update one node + label position and its incident edges; blit just those."""
+        if nid not in self.node_patches: return
+        x, y = self.nodes[nid]['pos']
+        self.node_patches[nid].center = (x, y)
+        self.node_labels[nid].set_position((x, y))
+        dirty = [self.node_patches[nid], self.node_labels[nid]]
+
+        for nb in self.nodes[nid]['connections']:
+            e = tuple(sorted((nid, nb)))
+            if e in self.edge_lines:
+                x1, y1 = self.nodes[e[0]]['pos']
+                x2, y2 = self.nodes[e[1]]['pos']
+                ln = self.edge_lines[e]
+                ln.set_data([x1, x2], [y1, y2])
+                dirty.append(ln)
+
+        self._blit_artists(dirty)
+
+    def _update_node_color(self, nid, color):
+        if nid in self.node_patches:
+            self.node_patches[nid].set_facecolor(color)
+            self._blit_artists([self.node_patches[nid]])
+        self._update_status()
+
+    def _update_node_label_text(self, nid):
+        if nid in self.node_labels:
+            data = self.nodes[nid]
+            label = str(nid)
+            if 'domain' in data and len(data['domain']) != len(self.map_colors):
+                label += f" ({len(data['domain'])})"
+            self.node_labels[nid].set_text(label)
+            self._blit_artists([self.node_labels[nid]])
+
+    def _add_edge_artist(self, a, b):
+        e = tuple(sorted((a, b)))
+        if e in self.edge_lines:  # already exists
+            return
+        x1, y1 = self.nodes[e[0]]['pos']
+        x2, y2 = self.nodes[e[1]]['pos']
+        ln = self.ax.plot([x1, x2], [y1, y2], color='white', linewidth=2, alpha=0.85)[0]
+        self.edge_lines[e] = ln
+        self._capture_bg()  # topology changed; recapture background
+        # If selection ring should be visible, re-blit it so it remains shown
+        if self.edit_ring and self.edit_ring.get_visible():
+            self._blit_artists([self.edit_ring])
+
+    def _remove_edge_artist(self, a, b):
+        e = tuple(sorted((a, b)))
+        ln = self.edge_lines.pop(e, None)
+        if ln:
+            ln.remove()
+            self._capture_bg()
+            if self.edit_ring and self.edit_ring.get_visible():
+                self._blit_artists([self.edit_ring])
+
+    # ---------- Mouse events ----------
+    def _on_press(self, event):
+        if event.inaxes != self.ax or event.xdata is None or event.ydata is None:
+            return
+        nid = self._find_node_at(event.xdata, event.ydata)
+        if nid is None:
+            return
+
+        # Always update domain panel selection on click
+        self.selected_for_domain = nid
+        if self.show_domain_panel and self.ax_domain:
+            self._render_domain_panel(nid)
+
+        if self.edit_edges_mode:
+            # show selection ring on click
+            if self.edge_first is None:
+                self.edge_first = nid
+                self._update_edit_ring()
+            else:
+                a, b = self.edge_first, nid
+                if a != b:
+                    if b in self.nodes[a]['connections']:
+                        self.nodes[a]['connections'].remove(b)
+                        self.nodes[b]['connections'].remove(a)
+                        self._remove_edge_artist(a, b)
+                        print(f"Removed edge {a}-{b}")
+                    else:
+                        self.nodes[a]['connections'].add(b)
+                        self.nodes[b]['connections'].add(a)
+                        self._add_edge_artist(a, b)
+                        print(f"Added edge {a}-{b}")
+                self.edge_first = None
+                self._update_edit_ring()
+            self._update_status()
+            return
+
+        # drag mode
+        cx, cy = self.nodes[nid]['pos']
+        self.dragging_id = nid
+        self.drag_offset = (event.xdata - cx, event.ydata - cy)
+        # ensure we have a fresh background for blitting
+        self._capture_bg()
+
+    def _on_motion(self, event):
+        if self.dragging_id is None or event.xdata is None or event.ydata is None:
+            return
+        now = _time.time()
+        if (now - self._last_motion_ts) < (1.0 / self._motion_hz):
+            return
+        self._last_motion_ts = now
+
+        dx, dy = self.drag_offset
+        x = max(1, min(9, event.xdata - dx))
+        y = max(1, min(7, event.ydata - dy))
+        self.nodes[self.dragging_id]['pos'] = (x, y)
+        self._update_node_position(self.dragging_id)
+
+    def _on_release(self, event):
+        self.dragging_id = None
+        # After a drag, refresh background to include the new positions
+        self._capture_bg()
+
+    def _update_edit_ring(self):
+        if self.edit_ring is None:
+            return
+        if self.edit_edges_mode and self.edge_first is not None:
+            x, y = self.nodes[self.edge_first]['pos']
+            self.edit_ring.center = (x, y)
+            self.edit_ring.set_visible(True)
+        else:
+            self.edit_ring.set_visible(False)
+        # After changing ring visibility/position, make sure it shows even after bg recapture
+        self._capture_bg()
+        self._blit_artists([self.edit_ring])
+
+    # ---------- Toggle style ----------
+    def _refresh_toggle_styles(self):
+        states = [self.use_mrv, self.use_degree]
+        rects = self._get_check_rects()
+        for rect, state in zip(rects, states):
+            rect.set_facecolor('#2FAA60' if state else '#A64040')
+            rect.set_alpha(0.9)
+            rect.set_edgecolor('white')
+            rect.set_linewidth(1.5)
+        self.ax_checks.set_facecolor('#1f1f1f')
+        self.fig.canvas.draw_idle()
+
+    # ---------- Helpers ----------
+    def _smart_pos(self):
+        n = self.node_counter
+        if n == 0: return 5, 4
         phi = (np.sqrt(5) + 1) / 2
         angle = 2 * np.pi * n / (phi**2)
         radius = 0.6 * np.sqrt(n)
         x = 5 + radius * np.cos(angle)
         y = 4 + radius * np.sin(angle)
-        # Clamp within bounds
-        x = max(1, min(9, x))
-        y = max(1, min(7, y))
-        return x, y
-
-    def add_node(self, event):
-        """Add a new region; borders are taken from the input box as comma-separated ids."""
-        self.node_counter += 1
-        node_id = self.node_counter
-        pos = self.get_smart_position()
-
-        connections_text = self.connections_box.text.strip()
-        connections = set()
-        if connections_text:
-            try:
-                ids = [int(x.strip()) for x in connections_text.split(',') if x.strip()]
-                connections = {cid for cid in ids if cid in self.nodes}
-            except ValueError:
-                connections = set()
-
-        self.nodes[node_id] = {
-            'pos': pos,
-            'connections': connections,
-            'color': '#888888'  # unassigned
-        }
-        # Make borders symmetric
-        for cid in connections:
-            self.nodes[cid]['connections'].add(node_id)
-
-        # Reset placeholder in the box
-        self.connections_box.set_val('1,2,3')
-
-        self.draw_graph()
-        print(f"Added region {node_id} with borders to regions {sorted(connections)}")
-
-    def clear_all(self, event):
-        self.nodes.clear()
-        self.node_counter = 0
-        self.edge_select_first = None
-        self.draw_graph()
-        print("Cleared all regions")
-
-    # --------------- Border editing controls ---------------
-
-    def toggle_edit_borders(self, event):
-        self.edit_edges_mode = not self.edit_edges_mode
-        self.edge_select_first = None
-        self.edit_btn.label.set_text(f"Edit Borders: {'ON' if self.edit_edges_mode else 'OFF'}")
-        self.draw_graph()
-
-    def connect_all(self, event):
-        ids = list(self.nodes.keys())
-        for i in range(len(ids)):
-            for j in range(i+1, len(ids)):
-                a, b = ids[i], ids[j]
-                self.nodes[a]['connections'].add(b)
-                self.nodes[b]['connections'].add(a)
-        self.draw_graph()
-        print("All regions connected (complete graph).")
-
-    def clear_borders(self, event):
-        for nid in self.nodes:
-            self.nodes[nid]['connections'].clear()
-        self.edge_select_first = None
-        self.draw_graph()
-        print("All borders cleared.")
-
-    def set_borders_from_pairs(self, event):
-        """Replace all borders with the pairs in pairs_box, format: 1-2,2-3,3-4"""
-        text = self.pairs_box.text.strip()
-        # Clear current borders
-        for nid in self.nodes:
-            self.nodes[nid]['connections'].clear()
-
-        if text:
-            pairs = re.split(r'[,\s]+', text)
-            for p in pairs:
-                if not p:
-                    continue
-                m = re.match(r'^(\d+)\s*-\s*(\d+)$', p)
-                if not m:
-                    continue
-                a, b = int(m.group(1)), int(m.group(2))
-                if a == b:
-                    continue
-                if a in self.nodes and b in self.nodes:
-                    self.nodes[a]['connections'].add(b)
-                    self.nodes[b]['connections'].add(a)
-
-        self.edge_select_first = None
-        self.draw_graph()
-        print("Borders set from pairs.")
-
-    # --------------- Toggles ---------------
-
-    def toggle_mrv(self, event):
-        self.use_mrv = not self.use_mrv
-        self._refresh_toggle_labels()
-        self.draw_graph()
-
-    def toggle_degree(self, event):
-        self.use_degree = not self.use_degree
-        self._refresh_toggle_labels()
-        self.draw_graph()
-
-    def toggle_both(self, event):
-        both_on = self.use_mrv and self.use_degree
-        # if both currently ON, turn both OFF; else turn both ON
-        new_state = not both_on
-        self.use_mrv = new_state
-        self.use_degree = new_state
-        self._refresh_toggle_labels()
-        self.draw_graph()
-
-    # --------------- Drag & Click handling ---------------
-
-    def _connect_events(self):
-        self.cid_press = self.fig.canvas.mpl_connect('button_press_event', self._on_press)
-        self.cid_motion = self.fig.canvas.mpl_connect('motion_notify_event', self._on_motion)
-        self.cid_release = self.fig.canvas.mpl_connect('button_release_event', self._on_release)
-
-    def _inside_node(self, nid, x, y):
-        nx, ny = self.nodes[nid]['pos']
-        return (x - nx)**2 + (y - ny)**2 <= (self.node_radius)**2
+        return max(1, min(9, x)), max(1, min(7, y))
 
     def _find_node_at(self, x, y):
-        # prefer topmost nodes (higher id) if overlapping
         for nid in sorted(self.nodes.keys(), reverse=True):
-            if self._inside_node(nid, x, y):
+            nx, ny = self.nodes[nid]['pos']
+            if (x - nx)**2 + (y - ny)**2 <= self.node_radius**2:
                 return nid
         return None
 
-    def _clamp_pos(self, x, y):
-        x = max(1, min(9, x))
-        y = max(1, min(7, y))
-        return x, y
-
-    def _toggle_edge(self, a, b):
-        if b in self.nodes[a]['connections']:
-            self.nodes[a]['connections'].remove(b)
-            self.nodes[b]['connections'].remove(a)
-            print(f"Removed border {a}-{b}")
-        else:
-            self.nodes[a]['connections'].add(b)
-            self.nodes[b]['connections'].add(a)
-            print(f"Added border {a}-{b}")
-
-    def _on_press(self, event):
-        if event.inaxes != self.ax or not self.nodes:
-            return
-        if event.xdata is None or event.ydata is None:
-            return
-
-        nid = self._find_node_at(event.xdata, event.ydata)
-        if nid is None:
-            return
-
-        if self.edit_edges_mode:
-            if self.edge_select_first is None:
-                self.edge_select_first = nid
-                self.draw_graph()
-            else:
-                a, b = self.edge_select_first, nid
-                if a != b:
-                    self._toggle_edge(min(a,b), max(a,b))
-                self.edge_select_first = None
-                self.draw_graph()
-            return
-
-        # drag mode (not editing edges)
-        cx, cy = self.nodes[nid]['pos']
-        self.dragging_id = nid
-        self.drag_offset = (event.xdata - cx, event.ydata - cy)
-
-    def _on_motion(self, event):
-        if self.dragging_id is None:
-            return
-        if event.inaxes != self.ax:
-            return
-        if event.xdata is None or event.ydata is None:
-            return
-
-        dx, dy = self.drag_offset
-        new_x = event.xdata - dx
-        new_y = event.ydata - dy
-        new_x, new_y = self._clamp_pos(new_x, new_y)
-        self.nodes[self.dragging_id]['pos'] = (new_x, new_y)
-        self.draw_graph()
-
-    def _on_release(self, event):
-        if self.dragging_id is None:
-            return
-        self.dragging_id = None
-        self.drag_offset = (0.0, 0.0)
-        self.draw_graph()
-
-    # --------------- CSP core ---------------
-
     def _neighbors(self):
-        return {nid: set(data['connections']) for nid, data in self.nodes.items()}
+        return {nid: set(d['connections']) for nid, d in self.nodes.items()}
 
     def _initial_domains(self):
-        """Full palette for uncolored nodes; respect any pre-colored nodes."""
-        domains = {}
-        for nid, data in self.nodes.items():
-            if data['color'] != '#888888':
-                domains[nid] = [data['color']]
-            else:
-                domains[nid] = list(self.map_colors)
-        return domains
+        return {nid: list(d['domain']) for nid, d in self.nodes.items()}
 
+    # ---------- UI callbacks ----------
+    def _toggle_checks(self, label):
+        if label == 'MRV':
+            self.use_mrv = not self.use_mrv
+        elif label == 'Degree':
+            self.use_degree = not self.use_degree
+        self._refresh_toggle_styles()
+        self._update_status()
+
+    def _toggle_edit_edges(self, event):
+        self.edit_edges_mode = not self.edit_edges_mode
+        if not self.edit_edges_mode:
+            self.edge_first = None
+        self.btn_edit.label.set_text(f"Edit Borders: {'ON' if self.edit_edges_mode else 'OFF'}")
+        self._update_edit_ring()
+        self._update_status()
+
+    def _toggle_domain_panel(self, event):
+        self.show_domain_panel = not self.show_domain_panel
+        self.btn_dom_toggle.label.set_text(f"Domain Panel: {'ON' if self.show_domain_panel else 'OFF'}")
+        if self.show_domain_panel:
+            self.btn_dom_toggle.color = '#3d6d3d'; self.btn_dom_toggle.hovercolor = '#4c8c4c'
+        else:
+            self.btn_dom_toggle.color = '#6d3d3d'; self.btn_dom_toggle.hovercolor = '#8c4c4c'
+
+        self._apply_ax_position()
+        if not self.show_domain_panel and self.ax_domain:
+            self.ax_domain.remove()
+            self.ax_domain = None
+        elif self.show_domain_panel and not self.ax_domain:
+            self._create_domain_axes_if_needed()
+            self._render_domain_panel(self.selected_for_domain)
+
+        # graph bbox changed → recapture bg for blitting
+        self._capture_bg()
+        self._update_status()
+
+    def _add_node(self, event):
+        self.node_counter += 1
+        nid = self.node_counter
+        self.nodes[nid] = {
+            'pos': self._smart_pos(),
+            'connections': set(),
+            'color': '#888888',
+            'domain': list(self.map_colors)  # full 10-color domain
+        }
+        self._build_scene()   # rebuild artists (status text is recreated here)
+        self._capture_bg()
+        self._update_status()
+
+    def _clear_colors_only(self, event):
+        for nid in self.nodes:
+            self.nodes[nid]['color'] = '#888888'
+            self._update_node_color(nid, '#888888')
+        self._capture_bg()
+        print("Colors cleared (nodes and edges unchanged).")
+
+    def _clear_all(self, event):
+        self.nodes.clear()
+        self.node_counter = 0
+        self.edit_edges_mode = False
+        self.edge_first = None
+        self.selected_for_domain = None
+        self._build_scene()
+        self._capture_bg()
+        self._update_status()
+
+    # ---------- Domain editor ----------
+    def _parse_color_token(self, tok):
+        tok = tok.strip()
+        if not tok: return None
+        if tok.isdigit():
+            idx = int(tok) - 1
+            if 0 <= idx < len(self.map_colors):
+                return self.map_colors[idx]
+            return None
+        if re.fullmatch(r'#?[0-9A-Fa-f]{6}', tok):
+            return tok if tok.startswith('#') else f'#{tok}'
+        return None
+
+    def _apply_domain(self, event):
+        nid_text = self.box_dom_id.text.strip()
+        col_text = self.box_dom_colors.text.strip()
+        if not nid_text or not col_text:
+            print("Enter Node ID and colors.")
+            return
+        try:
+            nid = int(nid_text)
+        except:
+            print("Invalid Node ID.")
+            return
+        if nid not in self.nodes:
+            print(f"Node {nid} does not exist.")
+            return
+        tokens = [t for t in re.split(r'[,\s]+', col_text) if t]
+        colors = []
+        for t in tokens:
+            c = self._parse_color_token(t)
+            if c: colors.append(c.upper())
+        colors = list(dict.fromkeys(colors))[:10]
+        if not colors:
+            print("No valid colors parsed.")
+            return
+        self.nodes[nid]['domain'] = colors
+        if self.nodes[nid]['color'] not in colors:
+            self.nodes[nid]['color'] = '#888888'
+            self._update_node_color(nid, '#888888')
+        if self.selected_for_domain == nid and self.show_domain_panel and self.ax_domain:
+            self._render_domain_panel(nid)
+        self._update_node_label_text(nid)
+        self._capture_bg()
+        self._update_status()
+        print(f"Domain for node {nid} set to {colors} (max 10).")
+
+    def _reset_domain(self, event):
+        nid_text = self.box_dom_id.text.strip()
+        try:
+            nid = int(nid_text)
+        except:
+            print("Enter a valid Node ID to reset.")
+            return
+        if nid in self.nodes:
+            self.nodes[nid]['domain'] = list(self.map_colors)
+            if self.selected_for_domain == nid and self.show_domain_panel and self.ax_domain:
+                self._render_domain_panel(nid)
+            self._update_node_label_text(nid)
+            self._capture_bg()
+            self._update_status()
+            print(f"Domain for node {nid} reset to full 10-color palette.")
+
+    def _reset_all_domains(self, event):
+        for nid in self.nodes:
+            self.nodes[nid]['domain'] = list(self.map_colors)
+            self._update_node_label_text(nid)
+        if self.selected_for_domain is not None and self.show_domain_panel and self.ax_domain:
+            self._render_domain_panel(self.selected_for_domain)
+        self._capture_bg()
+        self._update_status()
+        print("All domains reset to full 10-color palette.")
+
+    # ---------- Domain panel rendering ----------
+    def _render_domain_panel(self, nid):
+        if not self.show_domain_panel or not self.ax_domain:
+            return
+
+        ds = len(self.nodes[nid]['domain']) if (nid in self.nodes) else 0
+        self.ax_domain.set_position(self._compute_domain_panel_rect(max(1, ds)))
+
+        self.ax_domain.cla()
+        self.ax_domain.set_facecolor('#202020')
+        self.ax_domain.set_xticks([]); self.ax_domain.set_yticks([])
+        for spine in self.ax_domain.spines.values():
+            spine.set_color('#666666')
+
+        title = "Selected Domain:"
+        if nid is not None and nid in self.nodes:
+            title += f" Node {nid}"
+        self.ax_domain.text(0.03, 0.97, title, transform=self.ax_domain.transAxes,
+                            fontsize=11, color='white', weight='bold', va='top')
+
+        if nid is None or nid not in self.nodes:
+            self.ax_domain.text(0.03, 0.10, "Click a node to view its domain.",
+                                transform=self.ax_domain.transAxes,
+                                fontsize=10, color='#cccccc', va='bottom')
+            self.fig.canvas.draw_idle()
+            return
+
+        dom = self.nodes[nid]['domain']
+        if not dom:
+            self.ax_domain.text(0.03, 0.10, "(empty domain)",
+                                transform=self.ax_domain.transAxes,
+                                fontsize=10, color='#cccccc', va='bottom')
+            self.fig.canvas.draw_idle()
+            return
+
+        n = len(dom)
+        pad = 0.04
+        top_title_space = 0.16
+        cols = self._domain_cols_for(n)
+        rows = math.ceil(n / cols)
+
+        usable_h = 1.0 - top_title_space - pad
+        cell_w = (1.0 - (cols + 1) * pad) / cols
+        cell_h = (usable_h - (rows - 1) * pad) / rows
+        base_y = pad
+
+        swatch_w = cell_w * 0.42
+        swatch_h = cell_h * 0.55
+        label_y = 0.84
+        fs = max(8, min(12, 7 + 6 * cell_h))
+
+        def palette_index(hex_color):
+            h = hex_color.upper()
+            try:
+                return self.map_colors.index(h) + 1
+            except ValueError:
+                return None
+
+        for i, c in enumerate(dom):
+            r = rows - 1 - (i // cols)
+            k = i % cols
+            x_cell = pad + k * (cell_w + pad)
+            y_cell = base_y + r * (cell_h + pad)
+
+            idx = palette_index(c)
+            label_text = f"{idx}: {c.upper()}" if idx else c.upper()
+
+            self.ax_domain.text(x_cell + cell_w / 2,
+                                y_cell + cell_h * label_y,
+                                label_text, ha='center', va='center',
+                                fontsize=fs, color='white')
+
+            x_s = x_cell + (cell_w - swatch_w) / 2
+            y_s = y_cell + (cell_h * 0.15)
+            rect = patches.Rectangle((x_s, y_s), swatch_w, swatch_h,
+                                     facecolor=c, edgecolor='white', linewidth=1.2)
+            self.ax_domain.add_patch(rect)
+
+            if idx:
+                self.ax_domain.text(x_s + swatch_w - 0.02, y_s + swatch_h - 0.02,
+                                    str(idx), ha='right', va='top',
+                                    fontsize=max(7, fs - 2), color='white',
+                                    bbox=dict(boxstyle="round,pad=0.15",
+                                              facecolor='black', alpha=0.6,
+                                              edgecolor='white', linewidth=0.8))
+
+        self.fig.canvas.draw_idle()
+
+    # ---------- CSP with toggles + animation (blit coloring) ----------
     def _select_next_var(self, assignment, domains, neighbors):
-        """Select next variable to assign based on toggles."""
         unassigned = [v for v in self.nodes if v not in assignment]
         if not unassigned:
             return None
-
-        if self.use_mrv and self.use_degree:
-            # MRV + Degree tiebreaker
-            def key(v):
-                mrv = len(domains[v])
-                deg_unassigned = sum((nb not in assignment) for nb in neighbors[v])
-                return (mrv, -deg_unassigned, v)
-            return min(unassigned, key=key)
-
-        if self.use_mrv and not self.use_degree:
-            # MRV only; tie-break by id
-            def key(v):
-                return (len(domains[v]), v)
-            return min(unassigned, key=key)
-
-        if self.use_degree and not self.use_mrv:
-            # Degree only (no MRV): choose max degree among unassigned neighbors
-            def key(v):
-                deg_unassigned = sum((nb not in assignment) for nb in neighbors[v])
-                # negative to get max with min()
-                return (-deg_unassigned, v)
-            return min(unassigned, key=key)
-
-        # Neither: pick lowest id
-        return min(unassigned)
+        if self.use_mrv:
+            mrv = min(len(domains[v]) for v in unassigned)
+            pool = [v for v in unassigned if len(domains[v]) == mrv]
+        else:
+            pool = unassigned[:]
+        if self.use_degree:
+            return max(pool, key=lambda v: sum(nb not in assignment for nb in neighbors[v]))
+        return min(pool)
 
     def _is_consistent(self, var, color, assignment, neighbors):
-        for nb in neighbors[var]:
-            if nb in assignment and assignment[nb] == color:
-                return False
-        return True
+        return all(assignment.get(nb) != color for nb in neighbors[var])
 
     def _forward_check(self, var, color, domains, neighbors):
-        """Remove 'color' from neighbors' domains; returns list for undo. None => wipeout."""
         pruned = []
         for nb in neighbors[var]:
-            if nb in domains and color in domains[nb]:
+            if color in domains[nb]:
                 if len(domains[nb]) == 1:
-                    return None
+                    return None  # wipeout
                 domains[nb].remove(color)
                 pruned.append((nb, color))
         return pruned
@@ -527,102 +799,52 @@ class MapColoringVisualizer:
             if c not in domains[v]:
                 domains[v].append(c)
 
-    def _backtrack_color(self, assignment, domains, neighbors):
+    def _backtrack(self, assignment, domains, neighbors):
         if len(assignment) == len(self.nodes):
             return assignment
-
         var = self._select_next_var(assignment, domains, neighbors)
         if var is None:
             return assignment
-
-        # (Optional LCV could be added here)
         for color in list(domains[var]):
             if not self._is_consistent(var, color, assignment, neighbors):
                 continue
             assignment[var] = color
+            self.nodes[var]['color'] = color
+            self._update_node_color(var, color)
+            plt.pause(self.animation_delay)
+
             pruned = self._forward_check(var, color, domains, neighbors)
             if pruned is not None:
-                result = self._backtrack_color(assignment, domains, neighbors)
-                if result is not None:
-                    return result
+                res = self._backtrack(assignment, domains, neighbors)
+                if res is not None:
+                    return res
             # undo
             del assignment[var]
+            self.nodes[var]['color'] = '#888888'
+            self._update_node_color(var, '#888888')
             self._undo_pruned(pruned, domains)
-
+            plt.pause(max(self.animation_delay*0.6, 0.02))
         return None
 
-    # --------------- Greedy fallback (degree order) ---------------
-
-    def _greedy_degree_color(self):
-        """Simple greedy by decreasing degree; used only if backtracking fails."""
-        for node_data in self.nodes.values():
-            node_data['color'] = '#888888'
-
-        order = sorted(self.nodes.items(),
-                       key=lambda x: len(x[1]['connections']),
-                       reverse=True)
-        for node_id, node_data in order:
-            used = set()
-            for nb in node_data['connections']:
-                if nb in self.nodes:
-                    used.add(self.nodes[nb]['color'])
-            for color in self.map_colors:
-                if color not in used:
-                    node_data['color'] = color
-                    break
-
-    # --------------- Public: Auto Color button ---------------
-
-    def auto_color(self, event):
-        """Backtracking CSP with selectable MRV/Degree and forward checking (greedy fallback)."""
+    def _auto_color(self, event):
         if not self.nodes:
             return
-
-        # reset visuals to unassigned gray
-        for node_data in self.nodes.values():
-            node_data['color'] = '#888888'
+        # reset visuals quickly with blitting
+        for nid in self.nodes:
+            if self.nodes[nid]['color'] != '#888888':
+                self.nodes[nid]['color'] = '#888888'
+                self._update_node_color(nid, '#888888')
+        plt.pause(max(self.animation_delay*0.5, 0.02))
+        self._capture_bg()  # clean background after resets
 
         neighbors = self._neighbors()
         domains = self._initial_domains()
         assignment = {}
-
-        solution = self._backtrack_color(assignment, domains, neighbors)
-
-        if solution is None:
-            print("No valid coloring found with current palette; using greedy fallback.")
-            self._greedy_degree_color()
-            self.draw_graph()
-            used = len(set(nd['color'] for nd in self.nodes.values()))
-            print(f"Map colored using {used} colors (Greedy Degree Fallback).")
-            return
-
-        # Apply solution
-        for nid, color in solution.items():
-            self.nodes[nid]['color'] = color
-
-        self.draw_graph()
-        colors_used = len(set(solution.values()))
-        mode = []
-        if self.use_mrv: mode.append("MRV")
-        if self.use_degree: mode.append("Degree")
-        mode_label = " + ".join(mode) if mode else "No Heuristic"
-        print(f"Map colored successfully using {colors_used} colors ({mode_label} + Forward Checking).")
+        sol = self._backtrack(assignment, domains, neighbors)
+        if sol is None:
+            print("No valid coloring with current domains/palette.")
 
 
-# ---------------------- Run ----------------------
-
+# -------- Run --------
 if __name__ == "__main__":
-    print(" Map Coloring Visualizer")
-    print("=" * 30)
-    print("Instructions:")
-    print("1. Click 'Add Region' to add a new territory")
-    print("2. For new regions, you can enter comma-separated borders (e.g., '1,2,3')")
-    print("3. Drag nodes to rearrange them on the canvas")
-    print("4. Toggle MRV / Degree / Both to change the solver's variable selection")
-    print("5. Click 'Edit Borders' then click two nodes to toggle their border")
-    print("6. Use 'Set Borders' with pairs like '1-2,2-3' to replace all borders")
-    print("7. 'Connect All' makes a complete graph; 'Clear Borders' removes all edges")
-    print("8. Click 'Auto Color' to solve")
-    print("\nStarting visualizer...")
-
-    visualizer = MapColoringVisualizer()
+    MapColoringVisualizer()
