@@ -170,7 +170,7 @@
                 • <strong>Backtracking:</strong> Restore domain states when backtracking occurs<br>
                 • <strong>Early Failure Detection:</strong> Stop immediately if any domain becomes empty
             </div>
-
+            <!-- PART 2: Instructions for how to run the Python Code, to hard to implement in here :( -->
             <div class="highlight">
                 <strong>❗Performance Tip:</strong> The combination of MRV and Degree heuristics with forward checking typically reduces the search space by orders of magnitude compared to naive backtracking!
             </div>
@@ -223,8 +223,87 @@
                     <strong>Create new Map Coloring Problems:</strong> Add new regions, create edges between nodes, restrict color domains, and even change the order of the two heuristics. Try to solve the problems before having the Autocolor give the answer!
                 </div>
             </div>
+         </div>
+         </div>
 
+
+          <!-- PART 3: Network Frequency Assignment Problems -->
+        <div class="section" id="frequency-problems">
+            <h1>🌐 Network Frequency Assignment  Problems</h1>
+            <p><strong>Now apply what you've learned about Map Coloring using MRV and Degree Heuristics to solve real-world assignment problems.</strong></p>
+            <p></p>
+            <p>Background: In networking, seperate wirless networks must use different frequencies when in close proximity to avoid interference with one another. This extends to countries who must be assigned different frequency bands (1-6 MHz) to avoid interference with neighbors. Your job is to ensure there is no interference by assigning each country a seperate frequency band from any neighbor. HOWEVER, to ensure absolutely no infererence, we will also avoid assigning neighbors of neighboring countries the same frequencies.</p>
+            <div class="problem-section">
+                <div class="problem-header">
+                    <h2 class="problem-title">Problem Set</h2>
+                    <div class="problem-counter" id="problemCounter">Problem 1 of 3</div>
+                </div>
+                
+                <div id="problemContainer">
+                    <div class="map-container" id="mapContainer">
+                        <div id="mapPlaceholder" style="color: #666; font-size: 1.2em;">
+                            <p>Upload Problem 1 Map Here</p>
+                        </div>
+                        <img id="problemImage" src="" alt="Problem map" style="display: none; max-width: 100%; height: auto; border-radius: 8px;">
+                    </div>
+                    
+                    <div class="problem-instructions" id="problemInstructions">
+                        <h3> Frequency Assignment</h3>
+                        <p><strong>Objective:</strong> Assign frequency bands (1-6 MHz) to each country such that:</p>
+                        <ul>
+                            <li>No two neighboring countries use the same frequency</li>
+                            <li>No two countries that are neighbors of neighbors use the same frequency</li>
+                            <li>Use MRV Heuristics with Degree Heuristics as a tie-breaker</li>
+                        </ul>
+                        <p><strong>Available Frequencies:</strong> 1 MHz, 2 MHz, 3 MHz, 4 MHz, 5 MHz, 6 MHz</p>
+                    </div>
+                </div>
+                
+                <div class="assignment-section">
+                    <h3>Your Assignment:</h3>
+                    <div class="dropdown-container" id="dropdownContainer">
+                    </div>
+                    
+                    <div class="controls">
+                        <button class="btn" onclick="checkAnswer()" id="checkBtn">Check Answer</button>
+                        <button class="btn btn-secondary" onclick="nextProblem()" id="nextProblemBtn">Next Problem</button>
+                        <button class="btn btn-secondary" onclick="showSolution()" id="solutionBtn" style="display: none;">Show Solution</button>
+                    </div>
+                    
+                    <div id="feedback" class="feedback-box" style="display: none;"></div>
+                </div>
     </div>
+    
+    <!-- Solution Steps Section -->
+    <div class="solution-section" id="solutionSection" style="display: none;">
+        <h2>Step-by-Step Solution</h2>
+        <div class="solution-container">
+            <div class="step-counter" id="solutionStepCounter">Step 1 of 6</div>
+            
+            <div class="step-container">
+                <h3 class="step-title" id="solutionStepTitle">Solution Step 1</h3>
+                
+                <div style="text-align: center;">
+                    <img id="solutionStepImage" src="" alt="Solution step" class="step-image" style="display: none;">
+                    <div id="solutionImagePlaceholder" style="width: 600px; height: 400px; background: #f0f0f0; border: 2px dashed #ccc; display: inline-flex; align-items: center; justify-content: center; margin: 20px 0; border-radius: 10px;">
+                        <span style="color: #666; font-size: 1.2em;">Upload Solution Step 1 image</span>
+                    </div>
+                </div>
+                
+                <div class="step-description" id="solutionStepDescription">
+                    Solution explanation will appear here...
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-secondary" id="solutionPrevBtn" onclick="previousSolutionStep()" disabled>Previous</button>
+                <button class="btn" id="solutionNextBtn" onclick="nextSolutionStep()">Next Step</button>
+                <button class="btn btn-secondary" onclick="closeSolution()">Close Solution</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 
     <script>
         let currentStep = 1;
@@ -373,6 +452,177 @@
         window.onload = function() {
             updateStep();
         };
+
+            // Part 3: Frequency Assignment JavaScript
+            // We can change these values as needed
+            let currentProblem = 1;
+            let totalProblems = 3;
+            let wrongAttempts = 0;
+            let currentSolutionStep = 1;
+            let totalSolutionSteps = 6;
+
+            //Placeholder values we will hardcode these in later as needed
+            const problems = {
+                1: {
+                    countries: ['A', 'B', 'C', 'D', 'E', 'F'],
+                    solution: { A: '1', B: '2', C: '3', D: '4', E: '5', F: '6'}
+                },
+                2: {
+                    countries: ['A', 'B', 'C', 'D', 'E', 'F'],
+                    solution: { A: '1', B: '2', C: '3', D: '4', E: '5', F: '6'}
+                },
+                3: {
+                    countries: ['A', 'B', 'C', 'D', 'E', 'F'],
+                    solution: { A: '1', B: '2', C: '3', D: '4', E: '5', F: '6'}
+                }
+            };
+
+            const solutionSteps = {
+                1: [
+                    "Step 1: Identify the constraint graph and apply MRV heuristic...",
+                    "Step 2: Select country with fewest frequency options...",
+                    "Step 3: Apply degree heuristic for tie-breaking...",
+                    "Step 4: Assign frequencies using forward checking...",
+                    "Step 5: Continue with remaining countries...",
+                    "Step 6: Verify final solution meets all constraints."
+                ]
+            };
+
+            function initializeProblem() {
+                const problem = problems[currentProblem];
+                const container = document.getElementById('dropdownContainer');
+                
+                container.innerHTML = '';
+                
+                problem.countries.forEach(country => {
+                    const div = document.createElement('div');
+                    div.className = 'country-assignment';
+                    
+                    div.innerHTML = `
+                        <span class="country-label">Country ${country}</span>
+                        <select class="frequency-select" id="freq-${country}">
+                            <option value="">Select Frequency</option>
+                            <option value="1">1 MHz</option>
+                            <option value="2">2 MHz</option>
+                            <option value="3">3 MHz</option>
+                            <option value="4">4 MHz</option>
+                            <option value="5">5 MHz</option>
+                            <option value="6">6 MHz</option>
+                        </select>
+                    `;
+                    
+                    container.appendChild(div);
+                });
+                
+                // Update problem counter and images
+                document.getElementById('problemCounter').textContent = `Problem ${currentProblem} of ${totalProblems}`;
+                document.getElementById('mapPlaceholder').innerHTML = `
+                    <p>Upload Problem ${currentProblem} Map</p>
+                `;
+                
+                // Reset UI state
+                document.getElementById('feedback').style.display = 'none';
+                document.getElementById('solutionBtn').style.display = 'none';
+                document.getElementById('nextProblemBtn').style.display = 'inline-block'; 
+                wrongAttempts = 0;
+            }
+
+            function checkAnswer() {
+                const problem = problems[currentProblem];
+                const userAnswer = {};
+                let allSelected = true;
+                
+                problem.countries.forEach(country => {
+                    const select = document.getElementById(`freq-${country}`);
+                    const value = select.value;
+                    if (value === '') {
+                        allSelected = false;
+                    } else {
+                        userAnswer[country] = value;
+                    }
+                });
+                
+                if (!allSelected) {
+                    showFeedback('Please select frequencies for all countries.', false);
+                    return;
+                }
+                
+                const isCorrect = JSON.stringify(userAnswer) === JSON.stringify(problem.solution);
+                
+                if (isCorrect) {
+                    showFeedback(' Correct! Excellent work on solving this frequency assignment problem! Try a similar problem.', true);
+                    wrongAttempts = 0;
+                } else {
+                    wrongAttempts++;
+                    let message = ` Incorrect assignment. Check for interference between neighboring countries.`;
+                    
+                    if (wrongAttempts >= 3) {
+                        message += ` You can now view the step-by-step solution.`;
+                        document.getElementById('solutionBtn').style.display = 'inline-block';
+                    }
+                    
+                    showFeedback(message, false);
+                }
+            }
+
+            function showFeedback(message, isCorrect) {
+                const feedback = document.getElementById('feedback');
+                feedback.textContent = message;
+                feedback.className = `feedback-box ${isCorrect ? 'feedback-correct' : 'feedback-incorrect'}`;
+                feedback.style.display = 'block';
+            }
+
+            function nextProblem() {
+                currentProblem++;
+                if (currentProblem > totalProblems) {
+                currentProblem = 1; // Cycle back to problem 1 for infinite use
+            }
+            initializeProblem();
+            }
+
+            function showSolution() {
+                document.getElementById('solutionSection').style.display = 'block';
+                currentSolutionStep = 1;
+                updateSolutionStep();
+            }
+
+            function closeSolution() {
+                document.getElementById('solutionSection').style.display = 'none';
+            }
+
+            function updateSolutionStep() {
+                document.getElementById('solutionStepCounter').textContent = `Step ${currentSolutionStep} of ${totalSolutionSteps}`;
+                document.getElementById('solutionStepTitle').textContent = `Solution Step ${currentSolutionStep}`;
+                document.getElementById('solutionStepDescription').textContent = solutionSteps[1][currentSolutionStep - 1];
+                
+                // Update solution image placeholder
+                document.getElementById('solutionImagePlaceholder').innerHTML = `
+                    <span style="color: #666; font-size: 1.2em;">Upload Solution Step ${currentSolutionStep} image</span>
+                `;
+                
+                document.getElementById('solutionPrevBtn').disabled = currentSolutionStep === 1;
+                document.getElementById('solutionNextBtn').disabled = currentSolutionStep === totalSolutionSteps;
+            }
+
+            function nextSolutionStep() {
+                if (currentSolutionStep < totalSolutionSteps) {
+                    currentSolutionStep++;
+                    updateSolutionStep();
+                }
+            }
+
+            function previousSolutionStep() {
+                if (currentSolutionStep > 1) {
+                    currentSolutionStep--;
+                    updateSolutionStep();
+                }
+            }
+
+            document.addEventListener('DOMContentLoaded', function() {
+                if (document.getElementById('dropdownContainer')) {
+                    initializeProblem();
+                }
+            });
     </script>
 </body>
 
