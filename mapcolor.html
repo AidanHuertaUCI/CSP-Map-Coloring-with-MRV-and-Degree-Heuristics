@@ -232,7 +232,7 @@
             <h1>🌐 Network Frequency Assignment  Problems</h1>
             <p><strong>Now apply what you've learned about Map Coloring using MRV and Degree Heuristics to solve real-world assignment problems.</strong></p>
             <p></p>
-            <p>Background: In networking, seperate wirless networks must use different frequencies when in close proximity to avoid interference with one another. This extends to countries who must be assigned different frequency bands (1-6 MHz) to avoid interference with neighbors. Your job is to ensure there is no interference by assigning each country a seperate frequency band from any neighbor. HOWEVER, to ensure absolutely no infererence, we will also avoid assigning neighbors of neighboring countries the same frequencies.</p>
+            <p>Background: In networking, seperate wirless networks must use different frequencies when in close proximity to avoid interference with one another. This extends to countries who must be assigned different frequency bands (1-6 MHz) to avoid interference with neighbors. Your job is to ensure there is no interference by assigning each country a seperate frequency band from any neighbor. HOWEVER, to ensure absolutely no infererence, we will also avoid assigning neighbors of neighboring countries the same frequencies. Ignore any unlabelled landmasses and oceans.</p>
             <div class="problem-section">
                 <div class="problem-header">
                     <h2 class="problem-title">Problem Set</h2>
@@ -266,7 +266,7 @@
                     
                     <div class="controls">
                         <button class="btn" onclick="checkAnswer()" id="checkBtn">Check Answer</button>
-                        <button class="btn btn-secondary" onclick="nextProblem()" id="nextProblemBtn">Next Problem</button>
+                        <!--<button class="btn btn-secondary" onclick="nextProblem()" id="nextProblemBtn">Next Problem</button>-->
                         <button class="btn btn-secondary" onclick="showSolution()" id="solutionBtn" style="display: none;">Show Solution</button>
                     </div>
                     
@@ -456,7 +456,7 @@
             // Part 3: Frequency Assignment JavaScript
             // We can change these values as needed
             let currentProblem = 1;
-            let totalProblems = 3;
+            let totalProblems = 1;
             let wrongAttempts = 0;
             let currentSolutionStep = 1;
             let totalSolutionSteps = 6;
